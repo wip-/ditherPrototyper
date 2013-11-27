@@ -6,6 +6,7 @@
         <Grid.RowDefinitions>
             <RowDefinition Height="40*"/>
             <RowDefinition Height="300*"/>
+            <RowDefinition Height="40*"/>
         </Grid.RowDefinitions>
         <Grid.ColumnDefinitions>
             <ColumnDefinition Width="256*"/>
@@ -14,26 +15,37 @@
         </Grid.ColumnDefinitions>
         <Label Name="LabelInfo" Grid.Row="0" Grid.Column="0" VerticalAlignment="Center">Drop source image</Label>
         <Slider Name="SliderZoom" Grid.Row="0" Grid.Column="1" VerticalAlignment="Center" 
-                Minimum="0.5" Maximum="10" Value="1"
+                Minimum="0.1" Maximum="100" Value="1"
                 ValueChanged="SliderZoom_ValueChanged"/>
-        <Label Name="LabelZoom" Grid.Row="0" Grid.Column="2" VerticalAlignment="Center" HorizontalAlignment="Left">1</Label>
+        <StackPanel Orientation="Horizontal" Grid.Row="0" Grid.Column="2" VerticalAlignment="Center" HorizontalAlignment="Left">
+            <Label Name="LabelZoom" Width="50">1</Label>
+            <Button Name="ButtonResetZoom" Click="ButtonResetZoom_Click">Reset zoom</Button>
+        </StackPanel>
+        
         <ScrollViewer Name="ScrollViewerSource"
                       Grid.Row="1" Grid.Column="0" 
                       ScrollChanged="ScrollViewer_ScrollChanged"
                       ScrollViewer.HorizontalScrollBarVisibility="Auto" ScrollViewer.VerticalScrollBarVisibility="Visible">
-            <Image Name="ImageSource" Stretch="None" RenderTransformOrigin="0.5,0.5"/>
+            <Image Name="ImageSource" Stretch="None" RenderOptions.BitmapScalingMode="NearestNeighbor" RenderTransformOrigin="0.5,0.5"/>
         </ScrollViewer>
         <ScrollViewer Name="ScrollViewerQuantized"
                       Grid.Row="1" Grid.Column="1" 
                       ScrollChanged="ScrollViewer_ScrollChanged"
                       ScrollViewer.HorizontalScrollBarVisibility="Auto" ScrollViewer.VerticalScrollBarVisibility="Visible">
-            <Image Name="ImageQuantized" Stretch="None" RenderTransformOrigin="0.5,0.5"/>
+            <Image Name="ImageQuantized" Stretch="None" RenderOptions.BitmapScalingMode="NearestNeighbor" RenderTransformOrigin="0.5,0.5"/>
         </ScrollViewer>
         <ScrollViewer Name="ScrollViewerDithered"
                       Grid.Row="1" Grid.Column="2" 
                       ScrollChanged="ScrollViewer_ScrollChanged"
                       ScrollViewer.HorizontalScrollBarVisibility="Auto" ScrollViewer.VerticalScrollBarVisibility="Visible">
-            <Image Name="ImageDithered" Stretch="None" RenderTransformOrigin="0.5,0.5"/>
-        </ScrollViewer>        
+            <Image Name="ImageDithered" Stretch="None" RenderOptions.BitmapScalingMode="NearestNeighbor" RenderTransformOrigin="0.5,0.5"/>
+        </ScrollViewer>
+        <Button Name="ButtonShowSource" Grid.Row="2" Grid.Column="0" 
+                Content="Show Source Image folder" Click="ButtonShowSource_Click" Margin="2,2,2,2"/>
+        <Button Name="ButtonSaveQuantized" Grid.Row="2" Grid.Column="1" 
+                Content="Save Quantized Image (no dithering)" Click="ButtonSaveQuantized_Click" Margin="2,2,2,2"/>
+        <Button Name="ButtonSaveDithered" Grid.Row="2" Grid.Column="2" 
+                Content="Save Dithered (and Quantized) Image" Click="ButtonSaveDithered_Click" Margin="2,2,2,2"/>
+
     </Grid>
 </Window>

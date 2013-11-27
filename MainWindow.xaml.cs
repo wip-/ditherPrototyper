@@ -18,6 +18,7 @@ using System.Drawing;
 using System.Drawing.Imaging;
 using System.Windows.Interop;
 using System.Runtime.InteropServices;
+using Microsoft.Win32;
 
 namespace ditherPrototyper
 {
@@ -26,6 +27,10 @@ namespace ditherPrototyper
     /// </summary>
     public partial class MainWindow : Window
     {
+        String ImageSourceFileName;
+        Bitmap bitmapQuantized;
+        Bitmap bitmapDithered;
+
         public MainWindow()
         {
             InitializeComponent();
@@ -58,15 +63,15 @@ namespace ditherPrototyper
             if (files.Length > 1)
                 return "Too many files!";
 
-            String filename = files[0];
+            ImageSourceFileName = files[0];
 
-            if (!File.Exists(filename))
+            if (!File.Exists(ImageSourceFileName))
                 return "Not a file!";
 
             FileStream fs = null;
             try
             {
-                fs = File.Open(filename, FileMode.Open, FileAccess.Read, FileShare.None);
+                fs = File.Open(ImageSourceFileName, FileMode.Open, FileAccess.Read, FileShare.None);
             }
             catch (IOException)
             {
@@ -81,7 +86,7 @@ namespace ditherPrototyper
             {
                 bitmapSource = new Bitmap(fs);
             }
-            catch (System.Exception ex)
+            catch (System.Exception /*ex*/)
             {
                 bitmapSource.Dispose();
                 return "Not an image!";
@@ -103,8 +108,8 @@ namespace ditherPrototyper
             int dataBytesSize = bitmapStride * bitmapHeight;
             
 
-            // First: create "Quantized" image by trunking color precision
-            Bitmap bitmapQuantized = new Bitmap(bitmapWidth, bitmapHeight);
+            // Image on center (optional): create "Quantized" image by truncating color precision
+            bitmapQuantized = new Bitmap(bitmapWidth, bitmapHeight);
             BitmapData bitmapDataQuantized = bitmapQuantized.LockBits(rect,
                 ImageLockMode.WriteOnly, /*bitmapSource.PixelFormat*/ System.Drawing.Imaging.PixelFormat.Format32bppArgb);
             byte[] rgbaValuesQuantized = new byte[dataBytesSize];
@@ -112,14 +117,10 @@ namespace ditherPrototyper
             {
                 for (int x = 0; x < bitmapWidth; x++)
                 {
-                    System.Drawing.Color colorSource = GetColor(bitmapDataSource, x, y, bitmapSource.PixelFormat, bitmapStride, bitmapComponents, bitmapSource);
+                    System.Drawing.Color colorSource = GetPixelColor(bitmapDataSource, x, y, bitmapSource.PixelFormat, bitmapStride, bitmapComponents, bitmapSource);
                     System.Drawing.Color colorQuantized = GetQuantizedColor(colorSource);
 
-                    int indexQuantized = (bitmapStride * y) + (bitmapComponents * x);
-                    rgbaValuesQuantized[indexQuantized + 0] = colorQuantized.B;  // B
-                    rgbaValuesQuantized[indexQuantized + 1] = colorQuantized.G;  // G
-                    rgbaValuesQuantized[indexQuantized + 2] = colorQuantized.R;  // R
-                    rgbaValuesQuantized[indexQuantized + 3] = colorQuantized.A;  // A
+                    SetPixelColorInArray(rgbaValuesQuantized, x, y, colorQuantized, bitmapStride, bitmapComponents);
                 }
             }
             Marshal.Copy(rgbaValuesQuantized, 0, bitmapDataQuantized.Scan0, dataBytesSize);           
@@ -128,27 +129,48 @@ namespace ditherPrototyper
                     bitmapQuantized.GetHbitmap(), IntPtr.Zero, Int32Rect.Empty, BitmapSizeOptions.FromEmptyOptions());
 
 
-            // Second: create "Dithered" image
-            Bitmap bitmapDithered = new Bitmap(bitmapWidth, bitmapHeight);
+            // Image on right: create "Dithered" image
+            bitmapDithered = new Bitmap(bitmapWidth, bitmapHeight);
             BitmapData bitmapDataDithered = bitmapDithered.LockBits(rect,
                 ImageLockMode.WriteOnly, /*bitmapSource.PixelFormat*/ System.Drawing.Imaging.PixelFormat.Format32bppArgb);
             byte[] rgbaValuesDithered = new byte[dataBytesSize];
+
+            // initialize with values from source image
             for (int y = 0; y < bitmapHeight; y++)
             {
                 for (int x = 0; x < bitmapWidth; x++)
                 {
-                    System.Drawing.Color colorSource = GetColor(bitmapDataSource, x, y, bitmapSource.PixelFormat, bitmapStride, bitmapComponents, bitmapSource);
-                    System.Drawing.Color colorQuantized = GetColor(bitmapDataQuantized, x, y, bitmapQuantized.PixelFormat, bitmapStride, bitmapComponents, bitmapQuantized);
+                    System.Drawing.Color colorSource = GetPixelColor(bitmapDataSource, x, y, bitmapSource.PixelFormat, bitmapStride, bitmapComponents, bitmapSource);
+                    SetPixelColorInArray(rgbaValuesDithered, x, y, colorSource, bitmapStride, bitmapComponents);
+                }
+            }
 
-                    System.Drawing.Color colorDithered = colorQuantized;
-                    // TODO implement a dithering function !!!
+            // perform dithering (Floyd Steinberg)
+            for (int y = 0; y < bitmapHeight; y++)
+            {
+                for (int x = 0; x < bitmapWidth; x++)
+                {
+                    System.Drawing.Color colorSource = GetPixelColor(bitmapDataSource, x, y, bitmapSource.PixelFormat, bitmapStride, bitmapComponents, bitmapSource);
+                    System.Drawing.Color colorWithErrorDiffused = GetPixelColorFromArray(rgbaValuesDithered, x, y, bitmapStride, bitmapComponents);
+                    System.Drawing.Color colorQuantized = GetQuantizedColor(colorWithErrorDiffused);
 
+                    // Set quantized color to central pixel
+                    SetPixelColorInArray(rgbaValuesDithered, x, y, colorQuantized, bitmapStride, bitmapComponents);
 
-                    int indexDithered = (bitmapStride * y) + (bitmapComponents * x);
-                    rgbaValuesDithered[indexDithered + 0] = colorDithered.B;  // B
-                    rgbaValuesDithered[indexDithered + 1] = colorDithered.G;  // G
-                    rgbaValuesDithered[indexDithered + 2] = colorDithered.R;  // R
-                    rgbaValuesDithered[indexDithered + 3] = colorDithered.A;  // A
+                    // Diffuse error to neighbors (they will be quantized during subsequent loops)
+                    Int32 errorA = colorSource.A - colorQuantized.A;
+                    Int32 errorR = colorSource.R - colorQuantized.R;
+                    Int32 errorG = colorSource.G - colorQuantized.G;
+                    Int32 errorB = colorSource.B - colorQuantized.B;
+
+                    AddColorErrorToPixelInArray(rgbaValuesDithered, x + 1, y + 0, bitmapStride, bitmapComponents, bitmapWidth, bitmapHeight,
+                        errorA, errorR, errorG, errorB, 7f / 16f);
+                    AddColorErrorToPixelInArray(rgbaValuesDithered, x - 1, y + 1, bitmapStride, bitmapComponents, bitmapWidth, bitmapHeight,
+                        errorA, errorR, errorG, errorB, 3f / 16f);
+                    AddColorErrorToPixelInArray(rgbaValuesDithered, x + 0, y + 1, bitmapStride, bitmapComponents, bitmapWidth, bitmapHeight,
+                        errorA, errorR, errorG, errorB, 5f / 16f);
+                    AddColorErrorToPixelInArray(rgbaValuesDithered, x + 1, y + 1, bitmapStride, bitmapComponents, bitmapWidth, bitmapHeight,
+                        errorA, errorR, errorG, errorB, 1f / 16f);
                 }
             }
             Marshal.Copy(rgbaValuesDithered, 0, bitmapDataDithered.Scan0, dataBytesSize);
@@ -179,8 +201,7 @@ namespace ditherPrototyper
             return (byte)(32*(b/32));
         }
 
-
-        static private System.Drawing.Color GetColor(
+        static private System.Drawing.Color GetPixelColor(
             BitmapData bitmapData, int x, int y, System.Drawing.Imaging.PixelFormat pixelFormat, 
             int bitmapStride, int bitmapComponents, Bitmap bitmap)
         {
@@ -195,6 +216,55 @@ namespace ditherPrototyper
                             Marshal.ReadInt32(bitmapData.Scan0, (bitmapStride * y) + (bitmapComponents * x)));
                 return color;
             }
+        }
+
+        static private System.Drawing.Color GetPixelColorFromArray(byte[] pixelsArray, int x, int y, int bitmapStride, int bitmapComponents)
+        {
+            int indexDithered = (bitmapStride * y) + (bitmapComponents * x);
+            return System.Drawing.Color.FromArgb(
+                pixelsArray[indexDithered + 3],
+                pixelsArray[indexDithered + 2],
+                pixelsArray[indexDithered + 1],
+                pixelsArray[indexDithered + 0]);
+        }
+
+        static private void SetPixelColorInArray(
+            byte[] pixelsArray, int x, int y, System.Drawing.Color color, int bitmapStride, int bitmapComponents)
+        {
+            int indexDithered = (bitmapStride * y) + (bitmapComponents * x);
+            pixelsArray[indexDithered + 0] = color.B;  // B
+            pixelsArray[indexDithered + 1] = color.G;  // G
+            pixelsArray[indexDithered + 2] = color.R;  // R
+            pixelsArray[indexDithered + 3] = color.A;  // A
+        }
+
+        static private void AddColorErrorToPixelInArray(
+            byte[] pixelsArray, int x, int y, int bitmapStride, int bitmapComponents, int bitmapWidth, int bitmapHeigth,
+            Int32 errorA, Int32 errorR, Int32 errorG, Int32 errorB, double coefficient)
+        {
+            if (x < 0 || y < 0 || x >= bitmapWidth || y >= bitmapHeigth)
+                return;
+
+            int indexDithered = (bitmapStride * y) + (bitmapComponents * x);
+            byte sourceB = pixelsArray[indexDithered + 0];
+            byte sourceG = pixelsArray[indexDithered + 1];
+            byte sourceR = pixelsArray[indexDithered + 2];
+            byte sourceA = pixelsArray[indexDithered + 3];
+
+            double newB = Clamp0_255(sourceB + coefficient * errorB);
+            double newG = Clamp0_255(sourceG + coefficient * errorG);
+            double newR = Clamp0_255(sourceR + coefficient * errorR);
+            double newA = Clamp0_255(sourceA + coefficient * errorA);
+
+            pixelsArray[indexDithered + 0] = Convert.ToByte(newB);  // B
+            pixelsArray[indexDithered + 1] = Convert.ToByte(newG);  // G
+            pixelsArray[indexDithered + 2] = Convert.ToByte(newR);  // R
+            pixelsArray[indexDithered + 3] = Convert.ToByte(newA);  // A
+        }
+
+        public static double Clamp0_255(double value)
+        {
+            return (value < 0f) ? 0f : (value > 255f) ? 255f : value;
         }
 
         static private int GetComponentsNumber(System.Drawing.Imaging.PixelFormat pixelFormat)
@@ -216,6 +286,7 @@ namespace ditherPrototyper
             }
         }
 
+
         private void ScrollViewer_ScrollChanged(object sender, ScrollChangedEventArgs e)
         {
             double vert = ((ScrollViewer)sender).VerticalOffset;
@@ -228,6 +299,7 @@ namespace ditherPrototyper
                 scrollViewer.UpdateLayout();
             }
         }
+
 
         private void SliderZoom_ValueChanged(object sender, RoutedPropertyChangedEventArgs<double> e)
         {
@@ -246,7 +318,8 @@ namespace ditherPrototyper
                 {
                     if (image == null || image.Source == null)
                         continue;
-                    image.RenderTransform = myTransformGroup;
+                    //image.RenderTransform = myTransformGroup;
+                    image.LayoutTransform = myTransformGroup;
                 }
             }
             catch (System.Exception ex)
@@ -257,6 +330,68 @@ namespace ditherPrototyper
                 Console.WriteLine(sourceMsg);
                 MessageBox.Show(ex.Message + Environment.NewLine + sourceMsg);
                 Debugger.Break();
+            }
+        }
+
+        private void ButtonResetZoom_Click(object sender, RoutedEventArgs e)
+        {
+            SliderZoom.Value = 1;
+        }
+
+        private void ButtonShowSource_Click(object sender, RoutedEventArgs e)
+        {
+            if (ImageSourceFileName == null)
+                return;
+
+            Process.Start("explorer.exe", @"/select,""" + ImageSourceFileName + "\"");
+        }
+
+        private void ButtonSaveQuantized_Click(object sender, RoutedEventArgs e)
+        {
+            if (bitmapQuantized==null)
+                return;
+
+            SaveFileDialog dialogSaveFile = new SaveFileDialog();
+            dialogSaveFile.Filter = "Supported images|*.png";
+            dialogSaveFile.InitialDirectory = Path.GetDirectoryName(ImageSourceFileName);
+            dialogSaveFile.FileName = AddToFileName(ImageSourceFileName, "-quantized");
+
+            if ( (bool)dialogSaveFile.ShowDialog() /*== DialogResult.OK*/ )
+            {
+                Stream saveStream;
+                if ((saveStream = dialogSaveFile.OpenFile()) != null)
+                {
+                    bitmapQuantized.Save(saveStream, ImageFormat.Png);
+                    saveStream.Close();
+                }
+            }
+        }
+
+        String AddToFileName(String filename, String addChars)
+        {
+            return 
+                /*Path.GetDirectoryName(filename) +*/
+            Path.GetFileNameWithoutExtension(filename) + addChars + Path.GetExtension(filename);
+        }
+
+        private void ButtonSaveDithered_Click(object sender, RoutedEventArgs e)
+        {
+            if (bitmapDithered == null)
+                return;
+
+            SaveFileDialog dialogSaveFile = new SaveFileDialog();
+            dialogSaveFile.Filter = "Supported images|*.png";
+            dialogSaveFile.InitialDirectory = Path.GetDirectoryName(ImageSourceFileName);
+            dialogSaveFile.FileName = AddToFileName(ImageSourceFileName, "-dithered");
+
+            if ( (bool)dialogSaveFile.ShowDialog() /*== DialogResult.OK*/)
+            {
+                Stream saveStream;
+                if ((saveStream = dialogSaveFile.OpenFile()) != null)
+                {
+                    bitmapDithered.Save(saveStream, ImageFormat.Png);
+                    saveStream.Close();
+                }
             }
         }
 
