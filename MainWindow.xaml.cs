@@ -92,6 +92,13 @@ namespace ditherPrototyper
                 return "Not an image!";
             }
 
+            if (bitmapSource.PixelFormat == System.Drawing.Imaging.PixelFormat.Indexed)
+                return "The image already has an indexed format";
+
+            if (bitmapSource.PixelFormat != System.Drawing.Imaging.PixelFormat.Format24bppRgb
+             && bitmapSource.PixelFormat != System.Drawing.Imaging.PixelFormat.Format32bppArgb)
+                return "The image format is not supported";
+
             ImageSource.Source =
                 Imaging.CreateBitmapSourceFromHBitmap(
                     bitmapSource.GetHbitmap(), IntPtr.Zero, Int32Rect.Empty, BitmapSizeOptions.FromEmptyOptions());
@@ -103,27 +110,32 @@ namespace ditherPrototyper
             BitmapData bitmapDataSource = bitmapSource.LockBits(rect,
                 ImageLockMode.WriteOnly, bitmapSource.PixelFormat);
 
-            int bitmapStride = bitmapDataSource.Stride;
+            int bitmapStride_abs = Math.Abs(bitmapDataSource.Stride);
             int bitmapComponents = GetComponentsNumber(bitmapDataSource.PixelFormat);
-            int dataBytesSize = bitmapStride * bitmapHeight;
-            
+            int dataBytesSize = bitmapStride_abs * bitmapHeight;
+
+            byte[] rgbaValuesBufferSource = new byte[dataBytesSize];
+            Marshal.Copy(bitmapDataSource.Scan0, rgbaValuesBufferSource, 0, dataBytesSize);
 
             // Image on center (optional): create "Quantized" image by truncating color precision
             bitmapQuantized = new Bitmap(bitmapWidth, bitmapHeight);
             BitmapData bitmapDataQuantized = bitmapQuantized.LockBits(rect,
-                ImageLockMode.WriteOnly, /*bitmapSource.PixelFormat*/ System.Drawing.Imaging.PixelFormat.Format32bppArgb);
-            byte[] rgbaValuesQuantized = new byte[dataBytesSize];
+                ImageLockMode.WriteOnly, bitmapSource.PixelFormat);
+            byte[] rgbaValuesBufferQuantized = new byte[dataBytesSize];
             for (int y = 0; y < bitmapHeight; y++)
             {
                 for (int x = 0; x < bitmapWidth; x++)
                 {
-                    System.Drawing.Color colorSource = GetPixelColor(bitmapDataSource, x, y, bitmapSource.PixelFormat, bitmapStride, bitmapComponents, bitmapSource);
+                    //System.Drawing.Color colorSource = GetPixelColor(bitmapDataSource, x, y, bitmapSource.PixelFormat, bitmapStride_abs, bitmapComponents, bitmapSource);
+                    System.Drawing.Color colorSource = GetPixelColorFromArray(rgbaValuesBufferSource, x, y, bitmapStride_abs, bitmapComponents);
                     System.Drawing.Color colorQuantized = GetQuantizedColor(colorSource);
 
-                    SetPixelColorInArray(rgbaValuesQuantized, x, y, colorQuantized, bitmapStride, bitmapComponents);
+                    SetPixelColorInArray(rgbaValuesBufferQuantized, x, y, colorQuantized, bitmapStride_abs, bitmapComponents);
                 }
             }
-            Marshal.Copy(rgbaValuesQuantized, 0, bitmapDataQuantized.Scan0, dataBytesSize);           
+            Marshal.Copy(rgbaValuesBufferQuantized, 0, bitmapDataQuantized.Scan0, dataBytesSize);
+            bitmapQuantized.UnlockBits(bitmapDataQuantized);
+
             ImageQuantized.Source =
                 Imaging.CreateBitmapSourceFromHBitmap(
                     bitmapQuantized.GetHbitmap(), IntPtr.Zero, Int32Rect.Empty, BitmapSizeOptions.FromEmptyOptions());
@@ -132,16 +144,17 @@ namespace ditherPrototyper
             // Image on right: create "Dithered" image
             bitmapDithered = new Bitmap(bitmapWidth, bitmapHeight);
             BitmapData bitmapDataDithered = bitmapDithered.LockBits(rect,
-                ImageLockMode.WriteOnly, /*bitmapSource.PixelFormat*/ System.Drawing.Imaging.PixelFormat.Format32bppArgb);
-            byte[] rgbaValuesDithered = new byte[dataBytesSize];
+                ImageLockMode.WriteOnly, bitmapSource.PixelFormat);
+            byte[] rgbaValuesBufferDithered = new byte[dataBytesSize];
 
             // initialize with values from source image
             for (int y = 0; y < bitmapHeight; y++)
             {
                 for (int x = 0; x < bitmapWidth; x++)
                 {
-                    System.Drawing.Color colorSource = GetPixelColor(bitmapDataSource, x, y, bitmapSource.PixelFormat, bitmapStride, bitmapComponents, bitmapSource);
-                    SetPixelColorInArray(rgbaValuesDithered, x, y, colorSource, bitmapStride, bitmapComponents);
+                    //System.Drawing.Color colorSource = GetPixelColor(bitmapDataSource, x, y, bitmapSource.PixelFormat, bitmapStride_abs, bitmapComponents, bitmapSource);
+                    System.Drawing.Color colorSource = GetPixelColorFromArray(rgbaValuesBufferSource, x, y, bitmapStride_abs, bitmapComponents);
+                    SetPixelColorInArray(rgbaValuesBufferDithered, x, y, colorSource, bitmapStride_abs, bitmapComponents);
                 }
             }
 
@@ -150,37 +163,40 @@ namespace ditherPrototyper
             {
                 for (int x = 0; x < bitmapWidth; x++)
                 {
-                    System.Drawing.Color colorSource = GetPixelColor(bitmapDataSource, x, y, bitmapSource.PixelFormat, bitmapStride, bitmapComponents, bitmapSource);
-                    System.Drawing.Color colorWithErrorDiffused = GetPixelColorFromArray(rgbaValuesDithered, x, y, bitmapStride, bitmapComponents);
+                    //System.Drawing.Color colorSource = GetPixelColor(bitmapDataSource, x, y, bitmapSource.PixelFormat, bitmapStride_abs, bitmapComponents, bitmapSource);
+                    System.Drawing.Color colorSource = GetPixelColorFromArray(rgbaValuesBufferSource, x, y, bitmapStride_abs, bitmapComponents);
+                    System.Drawing.Color colorWithErrorDiffused = GetPixelColorFromArray(rgbaValuesBufferDithered, x, y, bitmapStride_abs, bitmapComponents);
                     System.Drawing.Color colorQuantized = GetQuantizedColor(colorWithErrorDiffused);
 
                     // Set quantized color to central pixel
-                    SetPixelColorInArray(rgbaValuesDithered, x, y, colorQuantized, bitmapStride, bitmapComponents);
+                    SetPixelColorInArray(rgbaValuesBufferDithered, x, y, colorQuantized, bitmapStride_abs, bitmapComponents);
 
-                    // Diffuse error to neighbors (they will be quantized during subsequent loops)
+                    // Diffuse error to neighbors (then they will be quantized during subsequent loops)
                     Int32 errorA = colorSource.A - colorQuantized.A;
                     Int32 errorR = colorSource.R - colorQuantized.R;
                     Int32 errorG = colorSource.G - colorQuantized.G;
                     Int32 errorB = colorSource.B - colorQuantized.B;
 
-                    AddColorErrorToPixelInArray(rgbaValuesDithered, x + 1, y + 0, bitmapStride, bitmapComponents, bitmapWidth, bitmapHeight,
+                    AddColorErrorToPixelInArray(rgbaValuesBufferDithered, x + 1, y + 0, bitmapStride_abs, bitmapComponents, bitmapWidth, bitmapHeight,
                         errorA, errorR, errorG, errorB, 7f / 16f);
-                    AddColorErrorToPixelInArray(rgbaValuesDithered, x - 1, y + 1, bitmapStride, bitmapComponents, bitmapWidth, bitmapHeight,
+                    AddColorErrorToPixelInArray(rgbaValuesBufferDithered, x - 1, y + 1, bitmapStride_abs, bitmapComponents, bitmapWidth, bitmapHeight,
                         errorA, errorR, errorG, errorB, 3f / 16f);
-                    AddColorErrorToPixelInArray(rgbaValuesDithered, x + 0, y + 1, bitmapStride, bitmapComponents, bitmapWidth, bitmapHeight,
+                    AddColorErrorToPixelInArray(rgbaValuesBufferDithered, x + 0, y + 1, bitmapStride_abs, bitmapComponents, bitmapWidth, bitmapHeight,
                         errorA, errorR, errorG, errorB, 5f / 16f);
-                    AddColorErrorToPixelInArray(rgbaValuesDithered, x + 1, y + 1, bitmapStride, bitmapComponents, bitmapWidth, bitmapHeight,
+                    AddColorErrorToPixelInArray(rgbaValuesBufferDithered, x + 1, y + 1, bitmapStride_abs, bitmapComponents, bitmapWidth, bitmapHeight,
                         errorA, errorR, errorG, errorB, 1f / 16f);
                 }
             }
-            Marshal.Copy(rgbaValuesDithered, 0, bitmapDataDithered.Scan0, dataBytesSize);
+            Marshal.Copy(rgbaValuesBufferDithered, 0, bitmapDataDithered.Scan0, dataBytesSize);
+            bitmapDithered.UnlockBits(bitmapDataDithered);
+
             ImageDithered.Source =
                 Imaging.CreateBitmapSourceFromHBitmap(
                     bitmapDithered.GetHbitmap(), IntPtr.Zero, Int32Rect.Empty, BitmapSizeOptions.FromEmptyOptions());
 
             bitmapSource.UnlockBits(bitmapDataSource);
-            bitmapQuantized.UnlockBits(bitmapDataQuantized);
-            bitmapDithered.UnlockBits(bitmapDataDithered);
+//            bitmapQuantized.UnlockBits(bitmapDataQuantized);
+            //bitmapDithered.UnlockBits(bitmapDataDithered);
 
             return "Drop source image";
         }
@@ -221,11 +237,12 @@ namespace ditherPrototyper
         static private System.Drawing.Color GetPixelColorFromArray(byte[] pixelsArray, int x, int y, int bitmapStride, int bitmapComponents)
         {
             int indexDithered = (bitmapStride * y) + (bitmapComponents * x);
-            return System.Drawing.Color.FromArgb(
-                pixelsArray[indexDithered + 3],
-                pixelsArray[indexDithered + 2],
-                pixelsArray[indexDithered + 1],
-                pixelsArray[indexDithered + 0]);
+            byte A = (bitmapComponents == 4)? pixelsArray[indexDithered + 3] : (byte)255;
+            byte R = pixelsArray[indexDithered + 2];
+            byte G = pixelsArray[indexDithered + 1];
+            byte B = pixelsArray[indexDithered + 0];
+
+            return System.Drawing.Color.FromArgb(A,R,G,B);
         }
 
         static private void SetPixelColorInArray(
@@ -235,7 +252,8 @@ namespace ditherPrototyper
             pixelsArray[indexDithered + 0] = color.B;  // B
             pixelsArray[indexDithered + 1] = color.G;  // G
             pixelsArray[indexDithered + 2] = color.R;  // R
-            pixelsArray[indexDithered + 3] = color.A;  // A
+            if(bitmapComponents==4)
+                pixelsArray[indexDithered + 3] = color.A;  // A
         }
 
         static private void AddColorErrorToPixelInArray(
@@ -249,7 +267,7 @@ namespace ditherPrototyper
             byte sourceB = pixelsArray[indexDithered + 0];
             byte sourceG = pixelsArray[indexDithered + 1];
             byte sourceR = pixelsArray[indexDithered + 2];
-            byte sourceA = pixelsArray[indexDithered + 3];
+            byte sourceA = (bitmapComponents==4)? pixelsArray[indexDithered + 3] : (byte)255;
 
             double newB = Clamp0_255(sourceB + coefficient * errorB);
             double newG = Clamp0_255(sourceG + coefficient * errorG);
@@ -259,7 +277,8 @@ namespace ditherPrototyper
             pixelsArray[indexDithered + 0] = Convert.ToByte(newB);  // B
             pixelsArray[indexDithered + 1] = Convert.ToByte(newG);  // G
             pixelsArray[indexDithered + 2] = Convert.ToByte(newR);  // R
-            pixelsArray[indexDithered + 3] = Convert.ToByte(newA);  // A
+            if ((bitmapComponents == 4))
+                pixelsArray[indexDithered + 3] = Convert.ToByte(newA);  // A
         }
 
         public static double Clamp0_255(double value)
